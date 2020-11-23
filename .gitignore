@@ -1,0 +1,10 @@
+# binaries
+main
+*.test
+
+# editor files
+.vscode
+.DS_Store
+
+# log files
+*.log
