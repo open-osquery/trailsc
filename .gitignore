@@ -1,5 +1,6 @@
 # binaries
 main
+trailsc
 *.test
 
 # editor files

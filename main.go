@@ -1,9 +1,7 @@
 package main
 
-import (
-	"fmt"
-)
+import "github.com/open-osquery/trailsc/cmd"
 
 func main() {
-	fmt.Println("The trails template project")
+	cmd.Execute()
 }

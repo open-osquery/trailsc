@@ -1,5 +1,15 @@
+version?=0.1.0
+type?=alpha
+build?=0
+commit=$(shell git rev-parse --short HEAD)
+package=github.com/open-osquery/trailsc
+LDFLAGS=-X $(package)/internal/config.Version=$(version)
+LDFLAGS+= -X $(package)/internal/config.Release=$(type)
+LDFLAGS+= -X $(package)/internal/config.Commit=$(commit)
+LDFLAGS+= -X $(package)/internal/ingestd.Build=$(build)
+
 build:
-	go build -o trails-template
+	go build -ldflags "-s -w $(LDFLAGS)" -o trailsc
 
 test:
 	go test -v ./...
