@@ -1,21 +1,22 @@
 package serve
 
 import (
-	"fmt"
-	"io"
-	"io/ioutil"
+	"crypto"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"net/http"
 	"os"
 
 	"github.com/fatih/color"
+	"github.com/fsnotify/fsnotify"
+	"github.com/gobwas/glob"
 	"github.com/gorilla/handlers"
 	"github.com/gorilla/mux"
+	"github.com/open-osquery/trailsc/internal/signer"
 	"github.com/sirupsen/logrus"
 	log "github.com/sirupsen/logrus"
+	"github.com/spf13/afero"
 )
 
 var (
@@ -30,15 +31,22 @@ var envsWhitelist = []string{
 }
 
 type apiServer struct {
-	path string
-	addr string
+	fs        afero.Fs
+	path      string
+	addr      string
+	container string
 
 	fileHandler  http.Handler
 	accessLogger *logrus.Logger
+	events       chan fsnotify.Event
+
+	signer       crypto.Signer
+	leaf         []byte
+	intermediate [][]byte
 }
 
 // Listen starts the local development server hosting the trails config bundles.
-func Listen(path, addr string, raw bool) {
+func Listen(path, addr, cert, container string, raw bool) {
 	if _, err := os.Stat(path); err != nil {
 		log.Fatalf("Unable to stat directory: %s", path)
 	}
@@ -50,11 +58,45 @@ func Listen(path, addr string, raw bool) {
 		TimestampFormat: time.RFC3339,
 	})
 
+	baseFs := afero.NewBasePathFs(afero.NewOsFs(), path)
+	roFs := afero.NewReadOnlyFs(baseFs)
+	cowFs := afero.NewCopyOnWriteFs(roFs, afero.NewMemMapFs())
+	httpFs := afero.NewHttpFs(cowFs)
+
 	srv := apiServer{
 		path:         path,
+		fs:           cowFs,
 		addr:         addr,
+		container:    container,
 		accessLogger: accessLogger,
-		fileHandler:  http.FileServer(http.Dir(path)),
+		fileHandler:  http.FileServer(httpFs.Dir(".")),
+		events:       make(chan fsnotify.Event),
+	}
+
+	var err error
+	f, err := os.OpenFile(cert, os.O_RDONLY, 0644)
+	if err != nil {
+		log.WithError(err).WithField("cert", cert).Fatalln("Failed to open cert file")
+	}
+
+	srv.signer, srv.leaf, srv.intermediate, err = signer.ParseCertificates(f)
+	if err != nil {
+		log.WithError(err).Fatalln("Failed to parse certificate")
+	}
+
+	log.Infoln("Building the config bundles")
+	srv.bundle()
+
+	if !raw {
+		log.Infoln("Creating the config change listener")
+		go createWatcher(
+			path,
+			// TODO (prateeknischal) Fix this glob to a configurable one
+			glob.MustCompile(filepath.Join(path, "{config/**}")),
+			srv.events,
+		)
+
+		go srv.reloadFsOnChange()
 	}
 
 	srv.listen()
@@ -71,78 +113,4 @@ func (srv apiServer) listen() {
 
 	log.Infoln("trailsc listening on", srv.addr)
 	log.Fatalln(http.ListenAndServe(srv.addr, withLog))
-}
-
-func (srv apiServer) handler(w http.ResponseWriter, r *http.Request) {
-	vars := mux.Vars(r)
-	var env, bundle string
-	var ok bool
-
-	if env, ok = vars["env"]; !ok {
-		env = "qa"
-	}
-
-	if bundle, ok = vars["bundle"]; !ok {
-		http.NotFound(w, r)
-		return
-	}
-
-	if isValidEnv(env) && fileExists(srv.path, bundle) {
-		log.WithFields(log.Fields{
-			"env":    env,
-			"bundle": bundle,
-		}).Info("Sending to fileserver")
-		http.StripPrefix(fmt.Sprintf("/%s/", env), srv.fileHandler).ServeHTTP(w, r)
-		return
-	}
-
-	// The API router is not implemented yet.
-	w.WriteHeader(http.StatusNotImplemented)
-}
-
-func icoHandler(w http.ResponseWriter, r *http.Request) {
-	b, _ := ioutil.ReadAll(getFavicon())
-	w.Header().Add("Content-type", "image/x-icon")
-	w.Write(b)
-}
-
-func logFormatter(w io.Writer, params handlers.LogFormatterParams) {
-	var fn *color.Color = red
-	if params.StatusCode >= 200 && params.StatusCode < 299 {
-		fn = green
-	}
-
-	fn.Fprintf(
-		w,
-		"method=%s url=%s status=%d\n",
-		params.Request.Method,
-		params.URL.String(),
-		params.StatusCode,
-	)
-}
-
-func isValidEnv(env string) bool {
-	env = strings.ToLower(env)
-	for _, e := range envsWhitelist {
-		// Searching for prefixes and not exact string matches for extra
-		// flexibility. This would allow using environments as dev-foo or prod-a
-		// like environments.
-		if strings.HasPrefix(env, e) {
-			return true
-		}
-	}
-
-	return false
-}
-
-func fileExists(dir, name string) bool {
-	if _, err := os.Stat(filepath.Join(dir, name)); err != nil {
-		log.WithFields(log.Fields{
-			"dir":  dir,
-			"name": name,
-		}).Info("File not found")
-		return false
-	}
-
-	return true
 }
