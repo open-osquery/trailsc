@@ -9,3 +9,8 @@ trailsc
 
 # log files
 *.log
+
+# keys
+*.pem
+*.key
+*.crt

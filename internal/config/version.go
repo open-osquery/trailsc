@@ -16,6 +16,7 @@ var (
 	Release = "dirty"
 )
 
+// GetVersion returns the current version of the binary.
 func GetVersion() string {
 	return fmt.Sprintf("%s-%s+%s.%s", Version, Release, Build, Commit)
 }

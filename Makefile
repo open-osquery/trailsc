@@ -8,6 +8,9 @@ LDFLAGS+= -X $(package)/internal/config.Release=$(type)
 LDFLAGS+= -X $(package)/internal/config.Commit=$(commit)
 LDFLAGS+= -X $(package)/internal/ingestd.Build=$(build)
 
+install:
+	go install -ldflags "-s -w $(LDFLAGS)"
+
 build:
 	go build -ldflags "-s -w $(LDFLAGS)" -o trailsc
 
@@ -35,4 +38,3 @@ deps:
 	@chmod +x .pre-commit
 
 FORCE: ;
-
