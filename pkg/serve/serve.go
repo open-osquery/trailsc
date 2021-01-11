@@ -92,7 +92,7 @@ func Listen(path, addr, cert, container string, raw bool) {
 		go createWatcher(
 			path,
 			// TODO (prateeknischal) Fix this glob to a configurable one
-			glob.MustCompile(filepath.Join(path, "{config/**}")),
+			glob.MustCompile(filepath.Join(path, "**")),
 			srv.events,
 		)
 
